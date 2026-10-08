@@ -181,7 +181,7 @@
          // Mesa/amdgpu
 --- a/security/sandbox/linux/broker/SandboxBrokerPolicyFactory.cpp
 +++ b/security/sandbox/linux/broker/SandboxBrokerPolicyFactory.cpp
-@@ -1022,6 +1022,19 @@
+@@ -1022,6 +1022,25 @@
    // server access, as of bug 1769499).
    AddGLDependencies(policy.get());
  
@@ -192,6 +192,12 @@
 +    if (lstat("/dev/kgsl-3d0", &deviceStat) == 0 &&
 +        S_ISCHR(deviceStat.st_mode) && deviceStat.st_uid == 0) {
 +      policy->AddPath(rdwr, "/dev/kgsl-3d0");
++      // Mesa allocates shareable video surfaces from the system DMA heap.
++      struct stat heapStat;
++      if (lstat("/dev/dma_heap/system", &heapStat) == 0 &&
++          S_ISCHR(heapStat.st_mode) && heapStat.st_uid == 0) {
++        policy->AddPath(rdonly, "/dev/dma_heap/system");
++      }
 +      policy->AddPath(access | SandboxBroker::MAY_CONNECT,
 +                      "/tmp/anland/termux-va/termux-va.sock");
 +    }

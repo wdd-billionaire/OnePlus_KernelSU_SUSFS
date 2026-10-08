@@ -1,7 +1,9 @@
 # Experimental Firefox ESR ARM64 KGSL adapter
 
 This build preserves the Firefox RDD sandbox while adding opt-in brokered
-access to a root-owned KGSL character device and one Termux VA bridge socket.
+access to root-owned KGSL and system DMA-heap character devices, and one
+Termux VA bridge socket. The DMA heap is opened read-only for Mesa's video
+surface allocation ioctl; no general access to the device directory is added.
 It is for the DroidSpaces Debian environment on the OnePlus tablet.
 The exact source archive is verified with a pinned SHA-512 checksum.
 
