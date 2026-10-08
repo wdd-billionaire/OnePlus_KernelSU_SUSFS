@@ -1,0 +1,234 @@
+--- a/security/sandbox/linux/SandboxFilter.cpp
++++ b/security/sandbox/linux/SandboxFilter.cpp
+@@ -1966,10 +1966,17 @@
+ // a plugin file).  However, it does directly create shared memory
+ // segments, so it may need file brokering.
+ class RDDSandboxPolicy final : public SandboxPolicyCommon {
++  bool mTermuxVA = false;
++
+  public:
+   explicit RDDSandboxPolicy(SandboxBrokerClient* aBroker) {
+     mBroker = aBroker;
+     mMayCreateShmem = true;
++#if defined(__aarch64__)
++    const char* enabled = PR_GetEnv("MOZ_ENABLE_TERMUX_VA");
++    mTermuxVA = enabled && strcmp(enabled, "1") == 0;
++    mBrokeredConnect = mTermuxVA && mBroker;
++#endif
+   }
+ 
+ #ifndef ANDROID
+@@ -2023,7 +2030,21 @@
+         return Some(Error(EPERM));
+ #endif
+ 
++      case SYS_SETSOCKOPT: {
++        if (!mTermuxVA || !aHasArgs) {
++          return Some(Error(EACCES));
++        }
++        Arg<int> level(1), option(2);
++        return Some(If(AllOf(level == SOL_SOCKET,
++                             AnyOf(option == SO_SNDBUF, option == SO_RCVBUF)),
++                       Allow())
++                        .Else(Error(EACCES)));
++      }
++
+       case SYS_SOCKET:
++        if (mTermuxVA) {
++          return SandboxPolicyCommon::EvaluateSocketCall(aCall, aHasArgs);
++        }
+         // Hardware-accelerated decode uses EGL to manage hardware surfaces.
+         // When initialised it tries to connect to the Wayland server over a
+         // UNIX socket. It still works fine if it can't connect to Wayland, so
+@@ -2039,6 +2060,61 @@
+     }
+   }
+ 
++  ResultExpr EvaluateGraphicsIoctl(const Arg<unsigned long>& request,
++                                   int sysno) const {
++    auto shifted_type = request & kIoctlTypeMask;
++    static constexpr unsigned long kDrmType = static_cast<unsigned long>('d')
++                                              << _IOC_TYPESHIFT;
++    // Note: 'b' is also the Binder device on Android.
++    static constexpr unsigned long kDmaBufType = static_cast<unsigned long>('b')
++                                                 << _IOC_TYPESHIFT;
++#ifdef MOZ_ENABLE_V4L2
++    // Type 'V' for V4L2, used for hw accelerated decode
++    static constexpr unsigned long kVideoType = static_cast<unsigned long>('V')
++                                                << _IOC_TYPESHIFT;
++#endif
++#ifdef MOZ_ENABLE_VULKAN_VIDEO
++    static constexpr unsigned long kNvidiaRmType =
++        static_cast<unsigned long>('m') << _IOC_TYPESHIFT;
++#endif
++    // nvidia non-tegra uses some ioctls from this range (but not actual
++    // fbdev ioctls; nvidia uses values >= 200 for the NR field
++    // (low 8 bits))
++    static constexpr unsigned long kFbDevType = static_cast<unsigned long>('F')
++                                                << _IOC_TYPESHIFT;
++
++#if defined(__aarch64__)
++    // NVIDIA decoder, from Linux4Tegra
++    // http://lists.mplayerhq.hu/pipermail/ffmpeg-devel/2024-May/328552.html
++    static constexpr unsigned long kNvidiaNvmapType =
++        static_cast<unsigned long>('N') << _IOC_TYPESHIFT;
++    static constexpr unsigned long kNvidiaNvhostType =
++        static_cast<unsigned long>('H') << _IOC_TYPESHIFT;
++#endif  // defined(__aarch64__)
++
++    // Allow DRI and DMA-Buf for VA-API. Also allow V4L2 if enabled
++    return If(shifted_type == kDrmType, Allow())
++        .ElseIf(shifted_type == kDmaBufType, Allow())
++#ifdef MOZ_ENABLE_VULKAN_VIDEO
++        .ElseIf(shifted_type == kNvidiaRmType, Allow())
++#endif
++#ifdef MOZ_ENABLE_V4L2
++        .ElseIf(shifted_type == kVideoType, Allow())
++#endif
++    // NVIDIA decoder from Linux4Tegra, this is specific to Tegra ARM64 SoC
++#if defined(__aarch64__)
++        .ElseIf(shifted_type == kNvidiaNvmapType, Allow())
++        .ElseIf(shifted_type == kNvidiaNvhostType, Allow())
++#endif  // defined(__aarch64__)
++        // Hack for nvidia non-tegra devices, which isn't supported yet:
++#ifdef MOZ_ENABLE_VULKAN_VIDEO
++        .ElseIf(shifted_type == kFbDevType, Allow())
++#else
++        .ElseIf(shifted_type == kFbDevType, Error(ENOTTY))
++#endif
++        .Else(SandboxPolicyCommon::EvaluateSyscall(sysno));
++  }
++
+   ResultExpr EvaluateSyscall(int sysno) const override {
+     switch (sysno) {
+       case __NR_getrusage:
+@@ -2054,57 +2130,26 @@
+ 
+       case __NR_ioctl: {
+         Arg<unsigned long> request(1);
+-        auto shifted_type = request & kIoctlTypeMask;
+-        static constexpr unsigned long kDrmType =
+-            static_cast<unsigned long>('d') << _IOC_TYPESHIFT;
+-        // Note: 'b' is also the Binder device on Android.
+-        static constexpr unsigned long kDmaBufType =
+-            static_cast<unsigned long>('b') << _IOC_TYPESHIFT;
+-#ifdef MOZ_ENABLE_V4L2
+-        // Type 'V' for V4L2, used for hw accelerated decode
+-        static constexpr unsigned long kVideoType =
+-            static_cast<unsigned long>('V') << _IOC_TYPESHIFT;
+-#endif
+-#ifdef MOZ_ENABLE_VULKAN_VIDEO
+-        static constexpr unsigned long kNvidiaRmType =
+-            static_cast<unsigned long>('m') << _IOC_TYPESHIFT;
+-#endif
+-        // nvidia non-tegra uses some ioctls from this range (but not actual
+-        // fbdev ioctls; nvidia uses values >= 200 for the NR field
+-        // (low 8 bits))
+-        static constexpr unsigned long kFbDevType =
+-            static_cast<unsigned long>('F') << _IOC_TYPESHIFT;
+-
+ #if defined(__aarch64__)
+-        // NVIDIA decoder, from Linux4Tegra
+-        // http://lists.mplayerhq.hu/pipermail/ffmpeg-devel/2024-May/328552.html
+-        static constexpr unsigned long kNvidiaNvmapType =
+-            static_cast<unsigned long>('N') << _IOC_TYPESHIFT;
+-        static constexpr unsigned long kNvidiaNvhostType =
+-            static_cast<unsigned long>('H') << _IOC_TYPESHIFT;
+-#endif  // defined(__aarch64__)
+-
+-        // Allow DRI and DMA-Buf for VA-API. Also allow V4L2 if enabled
+-        return If(shifted_type == kDrmType, Allow())
+-            .ElseIf(shifted_type == kDmaBufType, Allow())
+-#ifdef MOZ_ENABLE_VULKAN_VIDEO
+-            .ElseIf(shifted_type == kNvidiaRmType, Allow())
+-#endif
+-#ifdef MOZ_ENABLE_V4L2
+-            .ElseIf(shifted_type == kVideoType, Allow())
+-#endif
+-        // NVIDIA decoder from Linux4Tegra, this is specific to Tegra ARM64 SoC
+-#if defined(__aarch64__)
+-            .ElseIf(shifted_type == kNvidiaNvmapType, Allow())
+-            .ElseIf(shifted_type == kNvidiaNvhostType, Allow())
+-#endif  // defined(__aarch64__)
+-        // Hack for nvidia non-tegra devices, which isn't supported yet:
+-#ifdef MOZ_ENABLE_VULKAN_VIDEO
+-            .ElseIf(shifted_type == kFbDevType, Allow())
+-#else
+-            .ElseIf(shifted_type == kFbDevType, Error(ENOTTY))
+-#endif
+-            .Else(SandboxPolicyCommon::EvaluateSyscall(sysno));
++        // The 64-bit KGSL requests used by Mesa, not the entire ioctl family.
++        if (mTermuxVA) {
++          return Switch(request)
++              .Case(0xc0300934UL, Allow())  // GPUMEM_ALLOC_ID
++              .Case(0xc0080935UL, Allow())  // GPUMEM_FREE_ID
++              .Case(0x40200937UL, Allow())  // GPUMEM_SYNC_CACHE
++              .Case(0xc0200948UL, Allow())  // GPUOBJ_IMPORT
++              .Case(0xc0300947UL, Allow())  // GPUOBJ_INFO
++              .Case(0x40100949UL, Allow())  // GPUOBJ_SYNC
++              .Case(0xc0180902UL, Allow())  // DEVICE_GETPROPERTY
++              .Case(0x400c0907UL, Allow())  // DEVICE_WAITTIMESTAMP_CTXTID
++              .Case(0xc0080913UL, Allow())  // DRAWCTXT_CREATE
++              .Case(0x40040914UL, Allow())  // DRAWCTXT_DESTROY
++              .Case(0xc040094aUL, Allow())  // GPU_COMMAND
++              .Case(0xc0200933UL, Allow())  // TIMESTAMP_EVENT
++              .Default(EvaluateGraphicsIoctl(request, sysno));
++        }
++#endif
++        return EvaluateGraphicsIoctl(request, sysno);
+       }
+ 
+         // Mesa/amdgpu
+--- a/security/sandbox/linux/broker/SandboxBrokerPolicyFactory.cpp
++++ b/security/sandbox/linux/broker/SandboxBrokerPolicyFactory.cpp
+@@ -1022,6 +1022,19 @@
+   // server access, as of bug 1769499).
+   AddGLDependencies(policy.get());
+ 
++#if defined(__aarch64__)
++  const char* termuxVA = PR_GetEnv("MOZ_ENABLE_TERMUX_VA");
++  if (termuxVA && strcmp(termuxVA, "1") == 0) {
++    struct stat deviceStat;
++    if (lstat("/dev/kgsl-3d0", &deviceStat) == 0 &&
++        S_ISCHR(deviceStat.st_mode) && deviceStat.st_uid == 0) {
++      policy->AddPath(rdwr, "/dev/kgsl-3d0");
++      policy->AddPath(access | SandboxBroker::MAY_CONNECT,
++                      "/tmp/anland/termux-va/termux-va.sock");
++    }
++  }
++#endif
++
+   // FFmpeg and GPU drivers may need general-case library loading
+   AddLdconfigPaths(policy.get());
+   AddLdLibraryEnvPaths(policy.get());
+--- a/toolkit/xre/glxtest/glxtest.cpp
++++ b/toolkit/xre/glxtest/glxtest.cpp
+@@ -21,6 +21,7 @@
+ #include <dlfcn.h>
+ #include <fcntl.h>
+ #include <unistd.h>
++#include <sys/stat.h>
+ #include <getopt.h>
+ #include <vector>
+ #include <stdint.h>
+@@ -622,7 +623,19 @@
+         eglQueryDeviceStringEXT(device, EGL_EXTENSIONS);
+     if (deviceExtensions &&
+         strstr(deviceExtensions, "EGL_MESA_device_software")) {
+-      record_value("MESA_ACCELERATED\nFALSE\n");
++      const char* termuxVA = getenv("MOZ_ENABLE_TERMUX_VA");
++      struct stat deviceStat;
++      if (termuxVA && strcmp(termuxVA, "1") == 0 &&
++          strcmp(reinterpret_cast<const char*>(vendorString), "freedreno") ==
++              0 &&
++          strstr(reinterpret_cast<const char*>(rendererString), "Adreno") &&
++          lstat("/dev/kgsl-3d0", &deviceStat) == 0 &&
++          S_ISCHR(deviceStat.st_mode) && deviceStat.st_uid == 0) {
++        record_value("MESA_ACCELERATED\nTRUE\n");
++        set_render_device_path("/dev/kgsl-3d0");
++      } else {
++        record_value("MESA_ACCELERATED\nFALSE\n");
++      }
+     } else {
+       const char* deviceString =
+           eglQueryDeviceStringEXT(device, EGL_DRM_DEVICE_FILE_EXT);

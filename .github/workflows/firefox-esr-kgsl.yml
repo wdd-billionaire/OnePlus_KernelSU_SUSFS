@@ -1,0 +1,56 @@
+name: Build Firefox ESR ARM64 KGSL sandbox adapter
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/firefox-esr-kgsl-build]
+    paths:
+      - .github/workflows/firefox-esr-kgsl.yml
+      - tools/firefox-kgsl/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firefox-esr-kgsl-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    env:
+      MOZBUILD_STATE_PATH: ${{ runner.temp }}/firefox-build/mozbuild
+      MOZ_CRASHREPORTER_NO_REPORT: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          # Only remove preinstalled SDKs on the disposable GitHub VM.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3-venv python3-dev curl xz-utils zstd zip unzip patch pkg-config libgtk-3-dev libdbus-glib-1-dev libasound2-dev libpulse-dev libxt-dev libx11-xcb-dev libdrm-dev libgbm-dev libva-dev libcurl4-openssl-dev
+          df -h
+          free -h
+          available=$(df --output=avail -B1 "$RUNNER_TEMP" | tail -n1)
+          if (( available < 25 * 1024 * 1024 * 1024 )); then
+            echo 'Need at least 25 GiB free for source, tools and object files.' >&2
+            exit 1
+          fi
+      - name: Build and package Firefox ESR
+        shell: bash
+        run: bash tools/firefox-kgsl/build.sh
+      - name: Upload package and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: firefox-esr-153.4.0-arm64-kgsl-${{ github.run_number }}
+          path: ${{ runner.temp }}/firefox-build/results/
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 7
