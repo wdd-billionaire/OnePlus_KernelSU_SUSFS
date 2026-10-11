@@ -16,6 +16,7 @@ tar -xJf "$archive" -C source --strip-components=1
 rm "$archive"
 cd source
 patch --batch --fuzz=0 -p1 < "$payload/firefox-153.4.0-kgsl-rdd.patch"
+patch --batch --fuzz=0 -p1 < "$payload/firefox-153.4.0-wayland-vsync.patch"
 cp "$payload/mozconfig" .mozconfig
 export MOZBUILD_STATE_PATH="$build_root/mozbuild"
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -32,7 +33,7 @@ export RUSTUP_TOOLCHAIN=1.99.0
 ./mach --no-interactive build package
 cp ../obj/dist/firefox-*.tar.* "$build_root/results/"
 cp .mozconfig "$build_root/results/mozconfig"
-cp "$payload/firefox-153.4.0-kgsl-rdd.patch" "$build_root/results/"
+cp "$payload/"*.patch "$build_root/results/"
 printf 'Source: Firefox %s\nSource SHA512: %s\nPatch commit: %s\nSandbox: enabled; KGSL access requires MOZ_ENABLE_TERMUX_VA=1\nDevice validation: still required\n' "$version" "$source_sha" "$GITHUB_SHA" > "$build_root/results/BUILD-INFO.txt"
 cd "$build_root/results"
 sha256sum firefox-*.tar.* > SHA256SUMS

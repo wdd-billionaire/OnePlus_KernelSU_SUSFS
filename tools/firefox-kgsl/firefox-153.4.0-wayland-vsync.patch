@@ -1,0 +1,72 @@
+From d9fdde099e202ba0dcd60574b90f625cef4d1670 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Emilio=20Cobos=20=C3=81lvarez?= <emilio@crisal.io>
+Date: Mon, 7 Sep 2026 10:16:51 +0000
+Subject: [PATCH] Bug 2069375 - Make sure to potentially create a
+ widget-specific vsync timer when attached. r=smaug
+
+Not sure how to best test this.
+
+Differential Revision: https://phabricator.services.mozilla.com/D323763
+---
+ layout/base/PresShellWidgetListener.cpp | 5 +++++
+ layout/base/nsRefreshDriver.cpp         | 8 ++++++++
+ layout/base/nsRefreshDriver.h           | 4 ++++
+ 3 files changed, 17 insertions(+)
+
+diff --git a/layout/base/PresShellWidgetListener.cpp b/layout/base/PresShellWidgetListener.cpp
+index 11d1400bb3dfb..b70d69fd9a36c 100644
+--- a/layout/base/PresShellWidgetListener.cpp
++++ b/layout/base/PresShellWidgetListener.cpp
+@@ -19,6 +19,8 @@
+ #include "nsIWidget.h"
+ #include "nsIWidgetListener.h"
+ #include "nsLayoutUtils.h"
++#include "nsPresContext.h"
++#include "nsRefreshDriver.h"
+ #include "nsXULPopupManager.h"
+ 
+ using namespace mozilla;
+@@ -88,6 +90,9 @@ void PresShellWidgetListener::AttachToTopLevelWidget(nsIWidget* aWidget) {
+   if (mWindow->GetWindowType() != WindowType::Invisible) {
+     mWindow->AsyncEnableDragDrop(true);
+   }
++  if (nsPresContext* pc = mPresShell->GetPresContext()) {
++    pc->RefreshDriver()->NotifyWidgetAttached();
++  }
+ }
+ 
+ // Detach us from an attached widget.
+diff --git a/layout/base/nsRefreshDriver.cpp b/layout/base/nsRefreshDriver.cpp
+index ed95790541351..866c03bdb7e46 100644
+--- a/layout/base/nsRefreshDriver.cpp
++++ b/layout/base/nsRefreshDriver.cpp
+@@ -1839,6 +1839,14 @@ void nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags) {
+   }
+ }
+ 
++void nsRefreshDriver::NotifyWidgetAttached() {
++  if (mOwnTimer || !mActiveTimer) {
++    return;
++  }
++  // We might get a widget timer now, if we have a timer ticking.
++  EnsureTimerStarted(eForceAdjustTimer);
++}
++
+ void nsRefreshDriver::StopTimer() {
+   if (!mActiveTimer) {
+     return;
+diff --git a/layout/base/nsRefreshDriver.h b/layout/base/nsRefreshDriver.h
+index a11ea3ef99ea4..0f32b4c90f4bb 100644
+--- a/layout/base/nsRefreshDriver.h
++++ b/layout/base/nsRefreshDriver.h
+@@ -199,6 +199,10 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
+    */
+   void SetActivity(bool aIsActive);
+ 
++  // Called when our pres shell gets attached to a widget, so that we can switch
++  // to its vsync source if we started ticking before the widget was available.
++  void NotifyWidgetAttached();
++
+   /**
+    * Return the prescontext we were initialized with
+    */

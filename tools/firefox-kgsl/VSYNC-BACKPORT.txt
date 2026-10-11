@@ -1,0 +1,16 @@
+Firefox ESR 153.4.0 Wayland refresh-driver backport
+
+Upstream: https://bugzilla.mozilla.org/show_bug.cgi?id=2069375
+Commit: https://github.com/mozilla-firefox/firefox/commit/d9fdde099e202ba0dcd60574b90f625cef4d1670
+License: MPL-2.0, unchanged upstream patch.
+
+New documents can retain the fallback 60 Hz timer after their widget becomes
+available. NotifyWidgetAttached reconnects the refresh driver to the window
+vsync dispatcher when it was already ticking without a window-specific timer.
+No frame-rate override, background service, sandbox change or input change.
+
+Observed on OPD2513: Android/KWin and Wayland callbacks run at 90 Hz while
+content rAF stays near 60 Hz. Switching tabs reconnects it to the actual
+window rate, matching the upstream defect. Patch applies to the exact ESR
+source with fuzz=0 (12-line location offset in nsRefreshDriver.cpp).
+New binary still requires device validation.
