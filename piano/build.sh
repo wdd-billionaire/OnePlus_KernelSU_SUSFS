@@ -11,7 +11,7 @@ chmod +x repo
 ./repo init -u https://android.googlesource.com/kernel/manifest -b common-android15-6.6-2026-01 --depth=1 --no-clone-bundle --repo-rev=v2.61
 ./repo sync -c -j4 --no-tags --no-clone-bundle --fail-fast
 # Pin the source revision, whose Makefile is exactly Linux 6.6.118.
-git -C common fetch --depth=1 origin refs/tags/android15-6.6-2026-01_r1
+git -C common fetch --depth=1 origin refs/tags/android15-6.6-2026-01_r42
 git -C common checkout --detach FETCH_HEAD
 grep -qx 'SUBLEVEL = 118' common/Makefile
 ./repo manifest -r > "$GITHUB_WORKSPACE/piano-dist/source-manifest.xml"

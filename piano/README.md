@@ -2,7 +2,7 @@
 
 This branch builds an Android 15 GKI 6.6.118 kernel for testing DroidSpaces on Xiaomi Pad 8 Pro (piano).
 
-- AOSP source tag: android15-6.6-2026-01_r1.
+- AOSP source tag: android15-6.6-2026-01_r42.
 - Official KernelSU v3.3.1, pinned to commit 0c0fdb960178fa12d80d6cbcfdcb6ad8be6a865d.
 - 4K pages; PID, IPC and user namespaces; devtmpfs and container networking.
 - DroidSpaces upstream SYSVIPC ABI padding patch using slots 6/7/8.
