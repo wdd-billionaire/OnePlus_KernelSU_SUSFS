@@ -1,0 +1,40 @@
+name: Build piano Debian KernelSU GKI
+on:
+  push:
+    branches: [piano-debian-kernel]
+    paths: ['piano/**', '.github/workflows/piano-debian-kernel.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: piano-debian-kernel
+  cancel-in-progress: false
+jobs:
+  kernel:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Prepare runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev dwarves rsync cpio python3 zip zstd
+          df -h .
+      - name: Build pinned GKI and KernelSU
+        run: bash piano/build.sh
+      - name: Preserve build logs and outputs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: piano-debian-kernel-${{ github.run_id }}
+          path: piano-dist/
+          include-hidden-files: true
+          retention-days: 14
+      - name: Publish downloadable test build
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -C piano-dist -cJf piano-debian-6.6.118.tar.xz Image kernel.config Module.symvers System.map source-manifest.xml BUILD-INFO.txt SHA256SUMS
+          gh release create "piano-debian-${GITHUB_RUN_ID}" piano-debian-6.6.118.tar.xz --prerelease --latest=false --target "$GITHUB_SHA" --title "piano Debian test kernel ${GITHUB_RUN_ID}" --notes-file piano-dist/BUILD-INFO.txt
