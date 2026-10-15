@@ -2,7 +2,6 @@ name: Build piano Debian KernelSU GKI
 on:
   push:
     branches: [piano-debian-kernel]
-    paths: ['piano/**', '.github/workflows/piano-debian-kernel.yml']
   workflow_dispatch:
 permissions:
   contents: write
